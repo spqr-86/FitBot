@@ -1,5 +1,7 @@
 import os
 
+import requests
+
 import logging
 
 from typing import Any, Dict, Tuple
@@ -53,30 +55,32 @@ END = ConversationHandler.END
     CURRENT_FEATURE,
     CURRENT_LEVEL,
     N_GENDER,
-) = map(chr, range(10, 23))
+    GOAL,
+    LEVEL,
+    EQUIPMENT,
+    TIME,
+    LIMITATIONS,
+    EXPERIENCE,
+    NUTRITION,
+    HEART,
+    SLEEP,
+    STRESS,
+) = map(chr, range(10, 33))
 
 
 # Helper
-def _name_switcher(level: str) -> Tuple[str, str]:
-    if level == PARENTS:
-        return "Father", "Mother"
-    return "Brother", "Sister"
+def get_answer(prompt):
+    # Send a POST request to the Flask app with the prompt
+    url = "http://127.0.0.1:5000"
+    data = {'prompt': prompt}
+    headers = {'Content-Type': 'application/json'}
 
-
-# Generate prompt for OpnAI
-def generate_prompt(sex, age, goal, weight):
-    return """Составь программу тренировок для человека со следующими критериями:
-sex: Male
-age: 48
-goal: Олег
-Answer: Hi, Олег. Вот твоя програма:
-sex: {}
-age: {}
-goal: {}
-Answer: 
-""".format(
-        sex, age, goal, weight
+    response = requests.post(
+        url, json=data, headers=headers
     )
+    # Get the answer from the response
+    answer = response.text
+    return answer
 
 
 # Top level conversation callbacks
@@ -160,14 +164,12 @@ async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     await update.callback_query.answer()
     await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
     user_data[START_OVER] = True
-
     return SHOWING
 
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """End Conversation by command."""
     await update.message.reply_text("Okay, bye.")
-
     return END
 
 
@@ -183,22 +185,52 @@ async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 # Second level conversation callbacks
 async def select_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    """Choose to add a parent or a child."""
-    text = "You may add a parent or a child. Also you can show the gathered data or go back."
-    buttons = [
-        [
-            InlineKeyboardButton(text="Add parent", callback_data=str(PARENTS)),
-            InlineKeyboardButton(text="Add child", callback_data=str(CHILDREN)),
-        ],
-        [
-            InlineKeyboardButton(text="Show data", callback_data=str(SHOWING)),
-            InlineKeyboardButton(text="Back", callback_data=str(END)),
-        ],
-    ]
+    # Generate prompt for OpnAI
+    def generate_prompt(
+            gender='женщины', age='45',
+            goal='сбросить вес', level='новичок',
+            equipment='гантелей', time='3 дня в неделю',
+            limitation='нет', experience='нет', nutrition='нет',
+            heart='70', sleep='нормальный', stress='средний'):
+        return """ Создай индивидуальный 6-недельный план тренировок для 
+пользователя {} лет, с целью {}, текущим уровнем физической подготовки {}, 
+наличием {}, наличием времени {}, физическими ограничениями {}, 
+прошлый опыт тренировок {}, привычки питания {}, 
+частота пульса в покое {}, режим сна {} , и уровни стресса {}.
+    """.format(
+            gender, age, goal, level, equipment, time,
+            limitation, experience, nutrition, heart, sleep, stress
+        )
+
+    """Pretty print gathered data."""
+    def pretty_print(data: Dict[str, Any], level: str) -> str:
+        people = data.get(level)
+        if not people:
+            return "\nNo information yet."
+        if level == SELF:
+            for person in data[level]:
+                name = person.get(NAME)
+                age = person.get(AGE)
+                gender = person.get(GENDER)
+                goal = person.get(GOAL)
+                equipment = person.get(EQUIPMENT)
+                answer = get_answer(
+                    generate_prompt(
+                        gender=gender, age=age, goal=goal, equipment=equipment,
+
+                    )
+                )
+                return answer
+
+    user_data = context.user_data
+    text = f"Yourself:{pretty_print(user_data, SELF)}"
+
+    buttons = [[InlineKeyboardButton(text="Back", callback_data=str(END))]]
     keyboard = InlineKeyboardMarkup(buttons)
 
     await update.callback_query.answer()
     await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
+    user_data[START_OVER] = True
 
     return SELECTING_LEVEL
 
@@ -243,11 +275,21 @@ async def select_feature(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Select a feature to update for the person."""
     buttons = [
         [
+            InlineKeyboardButton(text="Имя", callback_data=str(NAME)),
             InlineKeyboardButton(text="Пол", callback_data=str(N_GENDER)),
-            InlineKeyboardButton(text="Name", callback_data=str(NAME)),
-            InlineKeyboardButton(text="Age", callback_data=str(AGE)),
-            InlineKeyboardButton(text="Done", callback_data=str(END)),
-        ]
+            InlineKeyboardButton(text="Возраст", callback_data=str(AGE)),
+        ],
+        [InlineKeyboardButton(text="Цель тренировок", callback_data=str(GOAL))],
+        [InlineKeyboardButton(text="Текущий уровень физической подготовки", callback_data=str(LEVEL))],
+        [InlineKeyboardButton(text="Доступное оборудование", callback_data=str(EQUIPMENT))],
+        [InlineKeyboardButton(text="Доступное время", callback_data=str(TIME))],
+        [InlineKeyboardButton(text="Физические ограничения", callback_data=str(LIMITATIONS))],
+        [InlineKeyboardButton(text="Прошлый опыт тренировок", callback_data=str(EXPERIENCE))],
+        [InlineKeyboardButton(text="Питание", callback_data=str(NUTRITION))],
+        [InlineKeyboardButton(text="Сердце", callback_data=str(HEART))],
+        [InlineKeyboardButton(text="Сон", callback_data=str(SLEEP))],
+        [InlineKeyboardButton(text="Уровень стресса", callback_data=str(STRESS))],
+        [InlineKeyboardButton(text="Done", callback_data=str(END))],
     ]
     keyboard = InlineKeyboardMarkup(buttons)
 
@@ -275,29 +317,29 @@ async def ask_for_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
     context.user_data[CURRENT_FEATURE] = update.callback_query.data
     text = f"Okay, tell me"
 
-    buttons = [
-        [
-            InlineKeyboardButton(text="Мужской", callback_data="Мужской"),
-            InlineKeyboardButton(text="Женский", callback_data="Женский"),
-            InlineKeyboardButton(text="Другой", callback_data="Другой"),
-        ]
-    ]
-    keyboard = InlineKeyboardMarkup(buttons)
-
     await update.callback_query.answer()
     if context.user_data[CURRENT_FEATURE] == N_GENDER:
+        buttons = [
+            [
+                InlineKeyboardButton(text="Мужской", callback_data="Мужской"),
+                InlineKeyboardButton(text="Женский", callback_data="Женский"),
+                InlineKeyboardButton(text="Другой", callback_data="Другой"),
+            ]
+        ]
+        keyboard = InlineKeyboardMarkup(buttons)
         text = "Пожалуйста, укажите свой пол. Выберите один из вариантов ниже"
         await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
     else:
+        if context.user_data[CURRENT_FEATURE] == GOAL:
+            text = ("Какова ваша конечная цель в фитнесе? "
+                    "(потеря веса, набор мышечной массы, общая физическая форма и т. д.)")
         await update.callback_query.edit_message_text(text=text)
-
     return TYPING
 
 
 async def save_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Save input for feature and return to feature selection."""
     user_data = context.user_data
-
     # Determine if the update is a message update or a callback query update
     if update.message:
         # Update is a message update
@@ -305,11 +347,8 @@ async def save_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     else:
         # Update is a callback query update
         user_input = update.callback_query.data
-
     user_data[FEATURES][user_data[CURRENT_FEATURE]] = user_input
-
     user_data[START_OVER] = True
-
     return await select_feature(update, context)
 
 
@@ -320,21 +359,18 @@ async def end_describing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user_data.get(level):
         user_data[level] = []
     user_data[level].append(user_data[FEATURES])
-
     # Print upper level menu
     if level == SELF:
         user_data[START_OVER] = True
         await start(update, context)
     else:
         await select_level(update, context)
-
     return END
 
 
 async def stop_nested(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Completely end conversation from within nested conversation."""
     await update.message.reply_text("Okay, bye.")
-
     return STOPPING
 
 
@@ -417,7 +453,6 @@ def main() -> None:
     )
 
     application.add_handler(conv_handler)
-
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
 
